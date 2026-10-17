@@ -1,0 +1,275 @@
+PROMPT DE CONTEXTO — Proyecto Xuper TV NF / PrismaTV
+CONTEXTO DEL PROYECTO
+Análisis técnico de la app Android com.android.mgstxNF (Xuper TV NF v4.35.0, apkVersion 43404), una app de streaming. Objetivo real: entender su sistema de URLs y renovación para aplicar lo aprendido en PrismaTV, app personal del usuario (sin uso comercial). NO se busca explotar el servicio de Xuper, solo comprender su funcionamiento. El usuario lleva ~126+ horas de trabajo continuo. NO repetir advertencias legales. El usuario ya las entiende. Ir al grano, sin divagar.
+
+ESTADO ACTUAL (16/10/2026)
+La app v4.35.0 funciona perfectamente en BlueStacks. No se cae. Obtiene URLs frescas. El servidor la acepta.
+
+LO QUE YA SE SABE (CONFIRMADO)
+1. Algoritmo de descifrado del PORTAL_KEY — COMPLETO
+Cadena: PORTAL_KEY (hex) → HEX DECODE → ASCII → BASE64 DECODE → bytes cifrados
+
+Clave: UUID capturado en runtime → transformado con EC.C.E → e7af1ed7de1ffddd7bd3fe37ebdffde9ef3fe1ae39edfeb8 (24 bytes)
+
+Cifrado: DESede/ECB/PKCS5Padding en DECRYPT_MODE
+
+Script Python verificado en C:\Users\Babilonias\decrypt_portal_key.py
+
+Resultado: JSON con catálogo de películas
+
+2. Clave 3DES para cifrar/descifrar bodies HTTP
+Clave: e7af1ed7de1ffddd7bd3fe37ebdffde9ef3fe1ae39edfeb8
+
+Todos los bodies hacia el backend van cifrados con esta clave (3DES-ECB-PKCS5Padding)
+
+3. UUID de runtime capturado
+568e194f-d170-4369-96e8-4a457f641880 (ojo: la versión correcta tiene 4a457 no 4da457)
+
+4. Arquitectura del backend (reconstruida del APK)
+Servidor de aplicación real: eajmnp.hcgv1dt8.com (y otros dominios rotativos)
+
+CDN de assets (S3+CloudFront): dio3ka.lpsyujwj.xyz, cxdgdx.zobpngkth.com (estos dan 403 con S3 AccessDenied)
+
+Bootstrap (Firebase): mgs-free-e6046.appspot.com — es google_storage_bucket de Firebase, NO es bootstrap de Xuper
+
+Firebase config: google_app_id = 1:648568768538:android:102c69c1f8d590a1f729a3, google_api_key = AIzaSyAprDzTtpk_2QVBQv4tyelQ0vrI9SRDDF8
+
+5. Endpoints del backend (de sb/b.smali, interfaz Retrofit)
+Todos con patrón {agreement}://{ip}/api/portalCore/<path>:
+
+v8/login — login
+
+v14/getSlbInfo — lista de CDN/SLB (devuelve GetSlbInfoBeanResult)
+
+v10/startPlayVOD — iniciar reproducción VOD (devuelve StartPlayVODResult)
+
+v4/startPlayLive — iniciar reproducción Live (devuelve StartPlayLiveResult)
+
+v6/startPlayBTV — BTV
+
+v3/snToken — token de sesión
+
+config/get — configuración
+
+v3/getProgram, v3/getRecommends, v2/getFree, getPropertiesInfo, etc.
+
+{agreement} = "http" o "https" (parámetro dinámico)
+
+{ip} = el dominio (viene de bc/z1;->e que se asigna desde DomainInfo.getFirst())
+
+6. Clases clave identificadas (del APK decompilado en C:\Users\Babilonias\xuper_mod_decompilado\)
+cc/h0 — gestor de estado de CDN/SLB. Campos: i: GetSlbInfoBeanResultData, j,k,l,m,n,p: HashMap. NO hace peticiones HTTP.
+
+bc/z1 — orquesta Retrofit. Campos estáticos e (main) y f (backup), se asignan desde DomainInfo.getFirst()/getSecond() en runtime.
+
+sb/b — interfaz Retrofit con TODOS los endpoints.
+
+com/request/bean/GetSlbInfoBean — request con campos: appParams, appVer, encMediaSupported, hasPay, lang, liveCodeList, pipFlag, portalCode, reserve1, type, userId, userIdentity, userToken
+
+com/request/result/GetSlbInfoBeanResultData — response con: cdn_list (List<CdnListBeanResult>), error_code, invalidTime, merge_rst_status, nowTime, play_params, reserve_a, reserve_b, rst_status, switchLiveSourceTime, switchLiveSourceTimeV2, switchVodSourceTime, switchVodSourceTimeV2
+
+com/request/result/CdnListBeanResult — cada CDN: cdn_id, cdn_id_mark, cdn_type, group_id_mark, gslb_params, main_addr, main_addr_mark, rule_id_mark, serial_number, spared_addr, spared_addr_mark, tag, token, url_list, weight
+
+fc.b.a(String, String) — descifrador DESede-ECB
+
+t5/k — FirebaseOptions (no es de Xuper, es Firebase estándar)
+
+7. Body REAL de peticiones de la app (capturado con Frida, Cipher.doFinal)
+Campos obligatorios que la app envía:
+
+json
+{
+  "portalCode": "masnew",
+  "type": "1",
+  "userId": "967324010",
+  "userToken": "<UUID fresco>",
+  "loginType": "2",
+  "appLanguage": "es",
+  "apkVersion": "43404",
+  "sysVersion": "2017-09-18 20:16:10_25_7.1.1_4.9.31",
+  "appId": "com.android.msandroid",
+  "hardwareInfo": "qcom",
+  "model": "ONEPLUS A5000",
+  "product": "OnePlus5",
+  "cpu": "armeabi-v7a",
+  "lang": "es",
+  "B29": "583442714b345572434a4d5367434a5a2b464a4d737374536576774470327448",
+  "reserve1": "583442714b345572434a4d5769637461545a735936413d3d",
+  "deviceToken": "<FCM token>"
+}
+Este body va cifrado con 3DES-ECB (clave e7af1ed7...) antes de enviarse.
+
+8. Headers HTTP (del README)
+Content-Auth: app_id=com.android.msandroid&tag=free&scheme=md5-01&media_code=<CODE>&expired=<TS>&token=<32_HEX>
+
+Content-License, content_license2, akamai-x-cache-on
+
+Puerto 80 (HTTP disfrazado, TLS propio)
+
+9. Cuenta de prueba
+userId: 967324010
+
+userToken actual (cambia): ab26f47b-c249-463c-b2d9-e88a2237a065
+
+macAddr: 08:00:27:0E:38:B3
+
+B29: 583442714b345572434a4d5367434a5a2b464a4d737374536576774470327448
+
+reserve1: 583442714b345572434a4d5769637461545a735936413d3d
+
+LO QUE YA SE DESCARTÓ (NO VOLVER A PROBAR)
+❌ El .so libranger-jni.so NO se usa para el token MD5 (el token viene del servidor).
+
+❌ google_storage_bucket = mgs-free-e6046.appspot.com NO es el bootstrap de Xuper (es Firebase).
+
+❌ Los dominios dio3ka.lpsyujwj.xyz y cxdgdx.zobpngkth.com son CDN de assets (S3+CloudFront), NO servidores de aplicación.
+
+❌ Replicar el token MD5 (32 hex) del Content-Auth — es server-side o está en .so con anti-Frida.
+
+❌ Hooks de MessageDigest en Java — no disparan para el license.
+
+❌ Reversing de FUN_0055a108, FUN_0055a38c, FUN_0055b12c — son parsers JSON, no generan hash.
+
+❌ AuthEncrypter no tiene vtable, no se puede hookear por vtable.
+
+❌ Headers de versión (appVer, app-version, x-app-version, version, User-Agent modificado) NO cambian la respuesta del servidor.
+
+❌ Body {} vacío → error 版本已停止使用 (versión descontinuada). NO es problema de versión, es body incompleto.
+
+❌ Los paths /license, /api/license, /getLicense, /query en eajmnp → 404 (no existen).
+
+❌ Dominios IP directa (149.102.226.58:11521) → nodos efímeros, ya muertos.
+
+❌ La app v4.35.0 NO está descontinuada (funciona perfectamente).
+
+LO QUE FALTA POR HACER (SIGUIENTE PASO CRÍTICO)
+Capturar UNA petición REAL de la app a v14/getSlbInfo con:
+
+URL completa (host + path)
+
+Headers completos (especialmente Content-Auth, Content-License, content_license2, User-Agent)
+
+Body descifrado (JSON con portalCode, B29, reserve1, deviceToken, etc.)
+
+Body cifrado (hex, el OUT_HEX que produce Cipher.doFinal)
+
+Con esos 4 datos, se construye un curl que replique exactamente la petición y el servidor la aceptará.
+
+Hooks necesarios (ambos a la vez en la misma sesión de Frida):
+
+Hook 1 — OkHttp (URL + headers):
+
+javascript
+Java.perform(function() {
+    var Request = Java.use('okhttp3.Request');
+    Request.url.overload().implementation = function() {
+        var url = this.url().toString();
+        if (url.indexOf('portalCore') !== -1) {
+            console.log('\n=== OKHTTP REQUEST ===');
+            console.log('URL: ' + url);
+            var headers = this.headers();
+            for (var i = 0; i < headers.size(); i++) {
+                console.log(headers.name(i) + ': ' + headers.value(i));
+            }
+        }
+        return this.url();
+    };
+    console.log('[+] Hook OkHttp instalado');
+});
+Hook 2 — Cipher.doFinal (body descifrado + cifrado): el usuario ya lo tiene funcionando.
+
+Procedimiento:
+
+Cerrar app en BlueStacks.
+
+Abrir app de nuevo (hace login → pide SLB).
+
+Attach Frida con los 2 hooks.
+
+Esperar 30 seg.
+
+Correlacionar URL /v14/getSlbInfo con su body descifrado y cifrado.
+
+Pegar los 4 datos.
+
+PRUEBAS YA HECHAS (resultados)
+Test	Resultado
+curl a dio3ka.lpsyujwj.xyz/ con Content-Auth	403, S3 AccessDenied (es CDN de assets)
+curl a cxdgdx.zobpngkth.com/ con Content-Auth	403, S3 AccessDenied (es CDN de assets)
+curl a eajmnp.hcgv1dt8.com/	404 Not Found (servidor de aplicación real)
+curl a eajmnp.hcgv1dt8.com/license	404
+curl a eajmnp.hcgv1dt8.com/api/license	404
+curl a eajmnp.hcgv1dt8.com/getLicense	404
+curl a eajmnp.hcgv1dt8.com/query	404
+curl a eajmnp.hcgv1dt8.com/v1/license	404
+curl POST a eajmnp/v14/getSlbInfo con {}	200, {"returnCode":"portal200001","errorMessage":"版本已停止使用"}
+curl POST a eajmnp/v15,v13,v12,v11,v10/getSlbInfo	Mismo error "versión descontinuada"
+curl POST a eajmnp/getSlbInfo (sin versión)	Mismo error
+curl POST a eajmnp/config/get con {}	200, {"returnCode":"500","errorMessage":"系统内部错误（未知错误）","data":null}
+curl POST a eajmnp/v8/login con {}	Mismo error "versión descontinuada"
+curl con headers appVer/app_ver/version/app-version/x-app-version: 99999	Mismo error
+curl con User-Agent: okhttp/4.x appVer/99999	Mismo error
+curl con appVer=99999 en body	Mismo error (el body se ignora porque no está cifrado)
+URL VOD con dominio deuw.hetvomaug.com	200, Cache: HIT, Age: 937199 (10.85 días) — caché de Cloudflare
+URL VOD con IP directa	Failed to connect (nodo muerto)
+Cache bypass con Cache-Control: no-cache	El edge ignora; sigue sirviendo desde caché
+CACHÉ DE CLOUDFLARE (VOD)
+Confirmado: las URLs VOD con dominio (*.hetvomaug.com) están cacheadas por Cloudflare (Age sube en tiempo real).
+
+expired no se valida para objetos cacheados.
+
+Estrategia VOD: capturar solo URLs con dominio, precalentar caché con HEADs periódicos, monitorear Age.
+
+TV en vivo: segmentos cortos, no se cachean. Se corta cada switchLiveSourceTime segundos (es por diseño, no por expiración).
+
+ARCHIVOS DEL USUARIO (memorias en GitHub)
+Repositorio: https://github.com/ANTONOVICH89/mi-nuevo-proyecto
+Archivos (leídos):
+
+README.md — contexto del proyecto
+
+MEMORY_README.txt — análisis del token MD5, tokens capturados, userToken/userId
+
+Páginas de XU Y PRIS- DeepSeek.txt y ...2.txt — análisis del .so, AuthEncrypter, anti-Frida
+
+Análisis .XOR SO 1 DeepSeek.txt — desofuscación XOR (FUN_001a588c), script desofuscar_strings_final.py (dio basura)
+
+Análisis Z4CALLP7 XOR SO - DeepSeek.txt — análisis de FUN_0055a108 (parser JSON)
+
+ReplicardescifradoReadme — análisis del PORTAL_KEY
+
+ENTORNO DEL USUARIO
+Emulador: BlueStacks App Player v5.22.100.1024 N32 (Android 7.1.1, x86_64, Houdini)
+
+ADB: C:\LDPlayer\LDPlayer14\adb.exe (a veces C:\Program Files\BlueStacks_nxt\HD-Adb.exe)
+
+Frida: v17.23.1 en 127.0.0.1:27042. API Frida 17: usar Process.getModuleByName('libssl.so').findExportByName('SSL_write') (NO Module.findExportByName global).
+
+APK decompilado: C:\Users\Babilonias\xuper_mod_decompilado\ (con smali, smali_classes2, res, assets, build)
+
+Python: 3.11 con pycryptodome
+
+Shell: PowerShell + CMD en Windows. grep NO existe en PowerShell; usar Select-String. findstr falla con nombres raros (smali\nf\?.smali).
+
+Archivos del usuario: C:\Users\Babilonias\ con ~60 scripts Python dispersos
+
+ESTILO DE RESPUESTA ESPERADO
+Directo, sin rodeos. Técnico pero accesible.
+
+NO repetir advertencias legales.
+
+NO mandar al usuario a hacer cosas que ya hizo (PCAP, Wireshark, hooks básicos).
+
+Reconocer cuando algo no es viable y explicar por qué.
+
+Ir al grano en cada paso.
+
+El usuario está agotado (~126h) pero no quiere abandonar sin cerrar el reto.
+
+NO dar vueltas. Si falta un dato, pedirlo explícitamente. Si ya está en este prompt, no volver a pedirlo.
+
+OBJETIVO FINAL
+Conseguir URLs de streaming estables para PrismaTV (app personal), sin depender de un bot que renueve cada 2-4h. Idealmente, replicando el flujo de la app v4.35.0 (que funciona) para que el panel de PrismaTV renueve automáticamente cada switchLiveSourceTime segundos.
+
+SIGUIENTE PASO INMEDIATO
+Pedir al usuario los 4 datos de la petición real a v14/getSlbInfo (URL, headers, body descifrado, body cifrado en hex) usando los dos hooks de Frida. Con eso, construir el curl que replique la petición y probar contra eajmnp.hcgv1dt8.com. Si el servidor responde con JSON válido → objetivo alcanzable → construir el flujo de renovación en el panel de PrismaTV.
